@@ -12,3 +12,5 @@ faiss-cpu==1.14.3
 pypdf==6.13.2
 langchain-text-splitters==1.1.2
 langchain-openai==1.2.1
+# Add this line to your requirements.txt file
+langchain-groq>=0.1.0
