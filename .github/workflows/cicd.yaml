@@ -115,8 +115,8 @@ jobs:
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
           LANGSMITH_PROJECT: ${{ secrets.LANGSMITH_PROJECT }}
         run: |
-          if [ -z "$GOOGLE_API_KEY" ]; then
-            echo "GOOGLE_API_KEY secret is missing."
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "GROQ_API_KEY secret is missing."
             exit 1
           fi
 
@@ -167,7 +167,7 @@ jobs:
           IMAGE_PATH: ${{ secrets.DOCKER_USERNAME }}/${{ secrets.IMAGE_NAME }}
 
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
 
@@ -182,7 +182,7 @@ jobs:
             --name stapp \
             -p 8501:8501 \
             -e OPENAI_API_KEY \
-            -e GOOGLE_API_KEY \
+            -e GROQ_API_KEY \
             -e TAVILY_API_KEY \
             -e OPENWEATHER_API_KEY \
             -e LANGSMITH_TRACING \
