@@ -2,61 +2,44 @@
 
 A Streamlit chatbot using LangGraph, Groq, OpenAI embeddings, and SQLite-backed conversation checkpoints.
 
-## Deploy to AWS EC2
+## Deploy to AWS EC2 with Docker
 
-These instructions run the app on a single Ubuntu EC2 instance using `systemd`. This is a simple starting point for a small deployment; use a reverse proxy with HTTPS and a domain before making the app publicly accessible.
+The included [Dockerfile](./Dockerfile) builds the Streamlit app and serves it on port `8501`. These instructions deploy it on a single Ubuntu EC2 instance.
 
-### Before you deploy
+### 1. Launch and secure an EC2 instance
 
-The current source needs these changes before it can be safely deployed:
+Launch an Ubuntu Server EC2 instance and configure its security group:
 
-1. **Rotate the Groq API key currently embedded in `backend.py`.** Treat it as exposed. Remove it from the source and read it from `GROQ_API_KEY` instead. Do not commit API keys or `.env` files.
-2. **Add `langchain-groq` to `requirements.txt`.** `backend.py` imports `langchain_groq`, but the dependency is not currently listed.
-3. Ensure `app.py`, `backend.py`, and `requirements.txt` are committed and pushed to the Git repository. The deployment steps below assume these files are available when you clone the repository.
-
-The app also requires `OPENAI_API_KEY` for OpenAI embeddings. `OPENWEATHER_API_KEY` is optional and is only needed for the weather tool.
-
-### 1. Create an EC2 instance
-
-In the AWS Console, launch an Ubuntu Server 24.04 LTS instance. Choose an instance size appropriate for your expected traffic and workload.
-
-Configure its security group:
-
-- Allow SSH (TCP 22) **only from your IP address**.
+- Allow SSH (TCP 22) only from your IP address.
 - For a temporary test, allow TCP 8501 only from your IP address.
-- For public production access, use a domain and HTTPS reverse proxy (TCP 80/443) instead of exposing port 8501 to everyone.
+- For public production access, use a domain and HTTPS reverse proxy or load balancer on TCP 80/443. Do not expose port 8501 to the whole internet.
 
 Connect to the instance using the SSH command shown in the EC2 Console.
 
-### 2. Install system packages and the application
+### 2. Install Docker and get the project
 
-Run these commands on the EC2 instance, replacing the repository URL with your GitHub repository URL:
+Run these commands on the EC2 instance. Replace the repository URL with your GitHub repository URL:
 
 ```bash
 sudo apt update
-sudo apt install -y python3-venv python3-pip git
+sudo apt install -y docker.io git
+sudo systemctl enable --now docker
 sudo mkdir -p /opt/agentic-chatbot
 sudo chown "$USER":"$USER" /opt/agentic-chatbot
 git clone https://github.com/<YOUR-USERNAME>/<YOUR-REPOSITORY>.git /opt/agentic-chatbot
 cd /opt/agentic-chatbot
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
 ```
-
-Confirm that the dependency and credential fixes in the **Before you deploy** section have been made before installing and starting the app.
 
 ### 3. Configure API keys
 
-Create a root-readable environment file on the instance:
+Create a protected environment file on the instance:
 
 ```bash
 sudo install -m 600 /dev/null /etc/agentic-chatbot.env
 sudo nano /etc/agentic-chatbot.env
 ```
 
-Add your keys (replace the placeholder values; do not include quotes):
+Add your API keys (replace the example values):
 
 ```dotenv
 GROQ_API_KEY=your_groq_api_key
@@ -64,57 +47,69 @@ OPENAI_API_KEY=your_openai_api_key
 OPENWEATHER_API_KEY=your_openweather_api_key
 ```
 
-`OPENWEATHER_API_KEY` may be omitted if you do not need weather lookups. Keep this file out of Git and restrict access to it.
+`GROQ_API_KEY` and `OPENAI_API_KEY` are required. `OPENWEATHER_API_KEY` is optional and is only needed for the weather tool. Do not add this file to Git or the Docker build context; pass it to the container with `--env-file`.
 
-### 4. Run the app as a service
+### 4. Build and start the container
 
-Create a `systemd` service:
-
-```bash
-sudo tee /etc/systemd/system/agentic-chatbot.service >/dev/null <<'EOF'
-[Unit]
-Description=Agentic Chatbot Streamlit app
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/opt/agentic-chatbot
-EnvironmentFile=/etc/agentic-chatbot.env
-ExecStart=/opt/agentic-chatbot/.venv/bin/streamlit run app.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now agentic-chatbot
-sudo systemctl status agentic-chatbot
-```
-
-This service assumes the standard Ubuntu EC2 user is `ubuntu`. If you use another Linux distribution or user, update the `User` and application paths accordingly.
-
-For a temporary, IP-restricted test, open `http://<EC2-PUBLIC-IP>:8501` in your browser. Check service logs if it does not start:
+Build the image from the project directory:
 
 ```bash
-sudo journalctl -u agentic-chatbot -n 100 --no-pager
+cd /opt/agentic-chatbot
+sudo docker build -t agentic-chatbot:latest .
 ```
 
-### 5. Production access and data
+Start the app as a container that restarts after an instance or Docker restart:
 
-- Do not expose port 8501 to the public internet. Put Nginx, Caddy, or an Application Load Balancer with HTTPS in front of Streamlit, and allow inbound 80/443 as appropriate.
-- The app stores conversation checkpoints in `chatbot.db` in its working directory. Keep that file on persistent storage and back it up. A single local SQLite database is intended for a single app instance, not a horizontally scaled deployment.
-- If you use PDF retrieval, ensure the app's `faiss_db` index is present on the instance and persisted with the application data.
-- For production, consider storing API keys in AWS Secrets Manager or Systems Manager Parameter Store instead of a local environment file.
+```bash
+sudo docker run -d \
+  --name agentic-chatbot \
+  --restart unless-stopped \
+  --env-file /etc/agentic-chatbot.env \
+  --publish 8501:8501 \
+  --mount type=bind,source=/opt/agentic-chatbot,target=/app \
+  agentic-chatbot:latest
+```
+
+The bind mount keeps the app's `chatbot.db` SQLite checkpoint file (and any `faiss_db` PDF index) on the EC2 instance when the container is replaced. Keep this deployment to one app instance; SQLite on a local disk is not suitable for horizontally scaled replicas. Back up the project data directory regularly.
+
+For a temporary, IP-restricted test, open `http://<EC2-PUBLIC-IP>:8501`. To check startup or application logs:
+
+```bash
+sudo docker ps
+sudo docker logs --tail 100 agentic-chatbot
+```
+
+### 5. Update the deployment
+
+Pull the latest project changes and rebuild/recreate the container:
+
+```bash
+cd /opt/agentic-chatbot
+git pull
+sudo docker build -t agentic-chatbot:latest .
+sudo docker rm -f agentic-chatbot
+sudo docker run -d \
+  --name agentic-chatbot \
+  --restart unless-stopped \
+  --env-file /etc/agentic-chatbot.env \
+  --publish 8501:8501 \
+  --mount type=bind,source=/opt/agentic-chatbot,target=/app \
+  agentic-chatbot:latest
+```
+
+The bind mount points at the checked-out project directory, so the repository should contain only trusted application files. Never store `.env` files, API keys, or other secrets in that directory or include them in the Docker build context.
 
 ## Run locally
 
-After installing the requirements and configuring the required API keys in your environment (or a local, untracked `.env` file):
+With Docker installed, configure a local environment file and build and run the image:
+
+```bash
+docker build -t agentic-chatbot .
+docker run --rm -p 8501:8501 --env-file .env agentic-chatbot
+```
+
+Alternatively, install the dependencies from `requirements.txt`, set the required API keys in your shell or a local untracked `.env` file, then run:
 
 ```bash
 streamlit run app.py
 ```
-
-Do not commit `.env` files, API keys, or local database files.
